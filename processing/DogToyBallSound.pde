@@ -2,17 +2,19 @@ import oscP5.*;
 import netP5.*;
 import processing.serial.*;
 import ddf.minim.*;
+import ddf.minim.ugens.*;
 
 OscP5 oscP5;
 Minim minim;
 
 // Audio assets
-AudioPlayer collarRunLoop;
-AudioPlayer ballRollingLoop;
-AudioSample collarBigMotionSample;
-AudioSample collarRelativeBurstSample;
-AudioSample ballStopSample;
-AudioSample ballCollisionSample;
+LoopHandle collarRunLoop;
+LoopHandle ballRollingLoop;
+SampleHandle collarBigMotionSample;
+SampleHandle collarRelativeBurstSample;
+SampleHandle ballStopSample;
+SampleHandle ballCollisionSample;
+AudioOutput lineOut;
 
 boolean audioReady = false;
 String audioStatusMessage = "";
@@ -144,6 +146,7 @@ void setup() {
   }
 
   minim = new Minim(this);
+  lineOut = minim.getLineOut();
   loadAudioAssets();
   initUi();
 }
@@ -200,58 +203,90 @@ void initUi() {
 }
 
 void loadAudioAssets() {
-  int availableCount = 0;
-  String missingList = "";
+  String fallbackList = "";
+  String unavailableList = "";
 
-  collarRunLoop = loadLoopSafe("collar_run_loop.wav");
-  if (collarRunLoop != null) {
-    availableCount++;
+  AudioPlayer runPlayer = loadLoopSafe("collar_run_loop.wav");
+  collarRunLoop = new LoopHandle(runPlayer, 180, 0.65f);
+  if (collarRunLoop.hasRealSound()) {
+    // loaded from file
+  } else if (collarRunLoop.hasFallback()) {
+    fallbackList = appendMissing(fallbackList, "collar_run_loop.wav");
   } else {
-    missingList = appendMissing(missingList, "collar_run_loop.wav");
+    unavailableList = appendMissing(unavailableList, "collar_run_loop.wav");
   }
 
-  ballRollingLoop = loadLoopSafe("ball_rolling_loop.wav");
-  if (ballRollingLoop != null) {
-    availableCount++;
+  AudioPlayer ballPlayer = loadLoopSafe("ball_rolling_loop.wav");
+  ballRollingLoop = new LoopHandle(ballPlayer, 240, 0.6f);
+  if (ballRollingLoop.hasRealSound()) {
+    // loaded from file
+  } else if (ballRollingLoop.hasFallback()) {
+    fallbackList = appendMissing(fallbackList, "ball_rolling_loop.wav");
   } else {
-    missingList = appendMissing(missingList, "ball_rolling_loop.wav");
+    unavailableList = appendMissing(unavailableList, "ball_rolling_loop.wav");
   }
 
-  collarBigMotionSample = loadSampleSafe("collar_big_motion.wav");
-  if (collarBigMotionSample != null) {
-    availableCount++;
+  AudioSample bigMotion = loadSampleSafe("collar_big_motion.wav");
+  collarBigMotionSample = new SampleHandle(bigMotion, 460, 0.32f, 0.85f);
+  if (collarBigMotionSample.hasRealSound()) {
+    // loaded from file
+  } else if (collarBigMotionSample.hasFallback()) {
+    fallbackList = appendMissing(fallbackList, "collar_big_motion.wav");
   } else {
-    missingList = appendMissing(missingList, "collar_big_motion.wav");
+    unavailableList = appendMissing(unavailableList, "collar_big_motion.wav");
   }
 
-  collarRelativeBurstSample = loadSampleSafe("collar_relative_burst.wav");
-  if (collarRelativeBurstSample != null) {
-    availableCount++;
+  AudioSample relativeBurst = loadSampleSafe("collar_relative_burst.wav");
+  collarRelativeBurstSample = new SampleHandle(relativeBurst, 720, 0.22f, 0.8f);
+  if (collarRelativeBurstSample.hasRealSound()) {
+    // loaded from file
+  } else if (collarRelativeBurstSample.hasFallback()) {
+    fallbackList = appendMissing(fallbackList, "collar_relative_burst.wav");
   } else {
-    missingList = appendMissing(missingList, "collar_relative_burst.wav");
+    unavailableList = appendMissing(unavailableList, "collar_relative_burst.wav");
   }
 
-  ballStopSample = loadSampleSafe("ball_stop_once.wav");
-  if (ballStopSample != null) {
-    availableCount++;
+  AudioSample stopOnce = loadSampleSafe("ball_stop_once.wav");
+  ballStopSample = new SampleHandle(stopOnce, 280, 0.4f, 0.75f);
+  if (ballStopSample.hasRealSound()) {
+    // loaded from file
+  } else if (ballStopSample.hasFallback()) {
+    fallbackList = appendMissing(fallbackList, "ball_stop_once.wav");
   } else {
-    missingList = appendMissing(missingList, "ball_stop_once.wav");
+    unavailableList = appendMissing(unavailableList, "ball_stop_once.wav");
   }
 
-  ballCollisionSample = loadSampleSafe("ball_collision.wav");
-  if (ballCollisionSample != null) {
-    availableCount++;
+  AudioSample collision = loadSampleSafe("ball_collision.wav");
+  ballCollisionSample = new SampleHandle(collision, 540, 0.28f, 0.9f);
+  if (ballCollisionSample.hasRealSound()) {
+    // loaded from file
+  } else if (ballCollisionSample.hasFallback()) {
+    fallbackList = appendMissing(fallbackList, "ball_collision.wav");
   } else {
-    missingList = appendMissing(missingList, "ball_collision.wav");
+    unavailableList = appendMissing(unavailableList, "ball_collision.wav");
   }
 
-  audioReady = availableCount > 0;
+  boolean anySound = false;
+  if (collarRunLoop != null && collarRunLoop.hasAnySound()) anySound = true;
+  if (ballRollingLoop != null && ballRollingLoop.hasAnySound()) anySound = true;
+  if (collarBigMotionSample != null && collarBigMotionSample.hasAnySound()) anySound = true;
+  if (collarRelativeBurstSample != null && collarRelativeBurstSample.hasAnySound()) anySound = true;
+  if (ballStopSample != null && ballStopSample.hasAnySound()) anySound = true;
+  if (ballCollisionSample != null && ballCollisionSample.hasAnySound()) anySound = true;
+
+  audioReady = anySound;
   if (!audioReady) {
-    audioStatusMessage = "Audio files not found";
-  } else if (missingList.length() == 0) {
-    audioStatusMessage = "Audio ready";
+    audioStatusMessage = "Audio unavailable";
+  } else if (unavailableList.length() > 0) {
+    if (fallbackList.length() > 0) {
+      audioStatusMessage = "No audio for: " + unavailableList + " | fallback tone: " + fallbackList;
+    } else {
+      audioStatusMessage = "No audio for: " + unavailableList;
+    }
+  } else if (fallbackList.length() > 0) {
+    audioStatusMessage = "Fallback tone for: " + fallbackList;
   } else {
-    audioStatusMessage = "Loaded " + availableCount + ", missing: " + missingList;
+    audioStatusMessage = "Audio ready";
   }
 }
 
@@ -373,14 +408,14 @@ void updateSoundLogic() {
     updateCollarRunLoop();
     updateCollarBigMotion();
     updateCollarRelativeBurst();
-    fadeLoop(ballRollingLoop, 0);
+    setLoopLevel(ballRollingLoop, 0);
     ballRollingActive = false;
     ballRollingLoopAmp = 0;
   } else {
     updateBallRollingLoop();
     updateBallStopShot();
     updateBallCollisionShot();
-    fadeLoop(collarRunLoop, 0);
+    setLoopLevel(collarRunLoop, 0);
     collarRunActive = false;
     collarRunLoopAmp = 0;
   }
@@ -388,7 +423,7 @@ void updateSoundLogic() {
 
 void updateCollarRunLoop() {
   if (!collarRunLoopEnabled) {
-    fadeLoop(collarRunLoop, 0);
+    setLoopLevel(collarRunLoop, 0);
     collarRunActive = false;
     collarRunAboveSince = -1;
     collarRunBelowSince = -1;
@@ -432,7 +467,7 @@ void updateCollarRunLoop() {
   }
 
   collarRunLoopAmp = lerp(collarRunLoopAmp, targetAmp, 0.12);
-  fadeLoop(collarRunLoop, collarRunLoopAmp);
+  setLoopLevel(collarRunLoop, collarRunLoopAmp);
 }
 
 void updateRunPeaks(float now) {
@@ -505,7 +540,7 @@ void updateCollarRelativeBurst() {
 
 void updateBallRollingLoop() {
   if (!ballRollingEnabled) {
-    fadeLoop(ballRollingLoop, 0);
+    setLoopLevel(ballRollingLoop, 0);
     ballRollingActive = false;
     ballRollAboveSince = -1;
     ballRollBelowSince = -1;
@@ -551,7 +586,7 @@ void updateBallRollingLoop() {
   }
 
   ballRollingLoopAmp = lerp(ballRollingLoopAmp, targetAmp, 0.14);
-  fadeLoop(ballRollingLoop, ballRollingLoopAmp);
+  setLoopLevel(ballRollingLoop, ballRollingLoopAmp);
 }
 
 void updateBallStopShot() {
@@ -590,13 +625,11 @@ void updateBallCollisionShot() {
   }
 }
 
-void fadeLoop(AudioPlayer player, float amp) {
-  if (player == null) {
+void setLoopLevel(LoopHandle loop, float amp) {
+  if (loop == null) {
     return;
   }
-  float scaled = applyMaster(amp);
-  float gainDb = ampToGainDb(scaled);
-  player.setGain(gainDb);
+  loop.setLevel(amp);
 }
 
 float applyMaster(float amp) {
@@ -606,13 +639,11 @@ float applyMaster(float amp) {
   return constrain(amp * masterVolume, 0, 1.5);
 }
 
-void triggerSample(AudioSample sample, float amp) {
+void triggerSample(SampleHandle sample, float amp) {
   if (sample == null) {
     return;
   }
-  float scaled = applyMaster(amp);
-  sample.setGain(ampToGainDb(scaled));
-  sample.trigger();
+  sample.trigger(amp);
 }
 
 float ampToGainDb(float amp) {
@@ -1054,27 +1085,160 @@ void parseSerialLine(String raw) {
 }
 
 void exit() {
-  closeSample(collarBigMotionSample);
-  closeSample(collarRelativeBurstSample);
-  closeSample(ballStopSample);
-  closeSample(ballCollisionSample);
-  closePlayer(collarRunLoop);
-  closePlayer(ballRollingLoop);
+  if (collarBigMotionSample != null) {
+    collarBigMotionSample.close();
+  }
+  if (collarRelativeBurstSample != null) {
+    collarRelativeBurstSample.close();
+  }
+  if (ballStopSample != null) {
+    ballStopSample.close();
+  }
+  if (ballCollisionSample != null) {
+    ballCollisionSample.close();
+  }
+  if (collarRunLoop != null) {
+    collarRunLoop.close();
+  }
+  if (ballRollingLoop != null) {
+    ballRollingLoop.close();
+  }
   if (minim != null) {
     minim.stop();
   }
   super.exit();
 }
 
-void closeSample(AudioSample sample) {
-  if (sample != null) {
-    sample.close();
+class LoopHandle {
+  AudioPlayer player;
+  Oscil fallback;
+  float fallbackScale;
+  float previewUntil = 0;
+  float previewLevel = 0.5f;
+
+  LoopHandle(AudioPlayer player, float fallbackFreq, float fallbackScale) {
+    this.player = player;
+    this.fallbackScale = fallbackScale;
+    if (player == null && lineOut != null && fallbackFreq > 0) {
+      fallback = new Oscil(fallbackFreq, 0, Waves.SINE);
+      fallback.patch(lineOut);
+    }
+  }
+
+  boolean hasRealSound() {
+    return player != null;
+  }
+
+  boolean hasFallback() {
+    return fallback != null;
+  }
+
+  boolean hasAnySound() {
+    return hasRealSound() || hasFallback();
+  }
+
+  void setLevel(float amp) {
+    float scaled = applyMaster(amp);
+    if (previewUntil > 0) {
+      if (millis() < previewUntil) {
+        scaled = max(scaled, previewLevel);
+      } else {
+        previewUntil = 0;
+      }
+    }
+    if (player != null) {
+      player.setGain(ampToGainDb(scaled));
+    } else if (fallback != null) {
+      float finalAmp = constrain(scaled * fallbackScale, 0, 1.1f);
+      fallback.setAmplitude(finalAmp);
+    }
+  }
+
+  void preview() {
+    previewLevel = max(applyMaster(0.7f), 0.28f * masterVolume);
+    if (previewLevel <= 0.0001f) {
+      return;
+    }
+    previewUntil = millis() + 600;
+    if (player != null) {
+      player.rewind();
+      player.play();
+    }
+  }
+
+  void close() {
+    if (player != null) {
+      player.close();
+    }
+    if (fallback != null && lineOut != null) {
+      fallback.unpatch(lineOut);
+    }
   }
 }
 
-void closePlayer(AudioPlayer player) {
-  if (player != null) {
-    player.close();
+class SampleHandle {
+  AudioSample sample;
+  float fallbackFreq;
+  float fallbackDuration;
+  float fallbackScale;
+
+  SampleHandle(AudioSample sample, float fallbackFreq, float fallbackDuration, float fallbackScale) {
+    this.sample = sample;
+    this.fallbackFreq = fallbackFreq;
+    this.fallbackDuration = fallbackDuration;
+    this.fallbackScale = fallbackScale;
+  }
+
+  boolean hasRealSound() {
+    return sample != null;
+  }
+
+  boolean hasFallback() {
+    return lineOut != null && fallbackFreq > 0;
+  }
+
+  boolean hasAnySound() {
+    return hasRealSound() || hasFallback();
+  }
+
+  void trigger(float amp) {
+    float scaled = applyMaster(amp);
+    if (scaled <= 0) {
+      return;
+    }
+    if (sample != null) {
+      sample.setGain(ampToGainDb(scaled));
+      sample.trigger();
+    } else if (hasFallback()) {
+      float level = constrain(scaled * fallbackScale, 0, 0.95f);
+      lineOut.playNote(0, fallbackDuration, new ToneInstrument(fallbackFreq, level));
+    }
+  }
+
+  void close() {
+    if (sample != null) {
+      sample.close();
+    }
+  }
+}
+
+class ToneInstrument implements Instrument {
+  Oscil wave;
+
+  ToneInstrument(float frequency, float amplitude) {
+    wave = new Oscil(frequency, amplitude, Waves.SINE);
+  }
+
+  void noteOn(float duration) {
+    if (lineOut != null) {
+      wave.patch(lineOut);
+    }
+  }
+
+  void noteOff() {
+    if (lineOut != null) {
+      wave.unpatch(lineOut);
+    }
   }
 }
 
@@ -1254,10 +1418,10 @@ class TestSoundButton {
   String label;
   float x, y, w, h;
   int type;
-  AudioSample sample;
-  AudioPlayer loop;
+  SampleHandle sample;
+  LoopHandle loop;
 
-  TestSoundButton(String label, float x, float y, float w, float h, int type, AudioSample sample) {
+  TestSoundButton(String label, float x, float y, float w, float h, int type, SampleHandle sample) {
     this.label = label;
     this.x = x;
     this.y = y;
@@ -1267,7 +1431,7 @@ class TestSoundButton {
     this.sample = sample;
   }
 
-  TestSoundButton(String label, float x, float y, float w, float h, int type, AudioPlayer loop) {
+  TestSoundButton(String label, float x, float y, float w, float h, int type, LoopHandle loop) {
     this.label = label;
     this.x = x;
     this.y = y;
@@ -1278,8 +1442,9 @@ class TestSoundButton {
   }
 
   void draw() {
+    boolean available = (type == TYPE_SAMPLE) ? (sample != null && sample.hasAnySound()) : (loop != null && loop.hasAnySound());
     stroke(70);
-    fill(80);
+    fill(available ? 80 : 50);
     rect(x, y, w, h, 6);
     fill(230);
     textAlign(CENTER, CENTER);
@@ -1290,14 +1455,14 @@ class TestSoundButton {
     if (mx < x || mx > x + w || my < y || my > y + h) {
       return false;
     }
-    if (type == TYPE_SAMPLE && sample != null) {
+    if (type == TYPE_SAMPLE && sample != null && sample.hasAnySound()) {
       triggerSample(sample, 0.9);
-    } else if (type == TYPE_LOOP && loop != null) {
-      float newAmp = applyMaster(1.0);
-      loop.setGain(ampToGainDb(newAmp));
-      loop.rewind();
-      loop.play();
+      return true;
     }
-    return true;
+    if (type == TYPE_LOOP && loop != null && loop.hasAnySound()) {
+      loop.preview();
+      return true;
+    }
+    return false;
   }
 }
