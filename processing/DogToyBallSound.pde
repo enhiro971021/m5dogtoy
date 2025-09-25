@@ -86,6 +86,21 @@ float collarRelativeLastValue = 0;
 float collarRelativeLastUpdateMs = 0;
 float collarRelativeAccumMs = 0;
 
+final float COLLAR_REL_MARGIN_MIN = 0.12f; // 鳴りやすい側
+final float COLLAR_REL_MARGIN_MAX = 0.58f; // 控えめ側
+
+float collarEaseToMargin(float easePercent) {
+  float clamped = constrain(easePercent, 0, 100);
+  float margin = map(clamped, 0, 100, COLLAR_REL_MARGIN_MAX, COLLAR_REL_MARGIN_MIN);
+  return constrain(margin, COLLAR_REL_MARGIN_MIN, COLLAR_REL_MARGIN_MAX);
+}
+
+float collarMarginToEase(float margin) {
+  float clamped = constrain(margin, COLLAR_REL_MARGIN_MIN, COLLAR_REL_MARGIN_MAX);
+  float ease = map(clamped, COLLAR_REL_MARGIN_MAX, COLLAR_REL_MARGIN_MIN, 0, 100);
+  return constrain(ease, 0, 100);
+}
+
 // Ball settings
 boolean ballRollingEnabled = true;
 float ballRollSensitivity = 0.5; // 0.0 (hard) to 1.0 (soft)
@@ -116,7 +131,7 @@ SliderControl masterVolumeSlider;
 SliderControl collarRunThresholdSlider;
 SliderControl collarRunVolumeSlider;
 SliderControl collarBigMotionSlider;
-SliderControl collarRelativeMarginSlider;
+SliderControl collarRelativeEaseSlider;
 SliderControl ballRollSensitivitySlider;
 SliderControl ballStopSecondsSlider;
 SliderControl ballCollisionSlider;
@@ -180,7 +195,8 @@ void initUi() {
 
   collarRelativeToggle = new ToggleControl("相対バースト", 20, 240, 200, 36);
   collarRelativeToggle.value = collarRelativeEnabled;
-  collarRelativeMarginSlider = new SliderControl("マージン", 240, 244, 220, 0.05, 0.8, collarRelativeMargin, 2);
+  float relativeEaseInitial = collarMarginToEase(collarRelativeMargin);
+  collarRelativeEaseSlider = new SliderControl("鳴りやすさ(%)", 240, 244, 220, 0, 100, relativeEaseInitial, 0);
 
   ballRollingToggle = new ToggleControl("転がりループ", 20, 360, 200, 36);
   ballRollingToggle.value = ballRollingEnabled;
@@ -401,7 +417,7 @@ void updateSoundLogic() {
   collarRunThreshold = collarRunThresholdSlider.value;
   collarRunVolume = collarRunVolumeSlider.value;
   collarBigMotionThreshold = collarBigMotionSlider.value;
-  collarRelativeMargin = collarRelativeMarginSlider.value;
+  collarRelativeMargin = collarEaseToMargin(collarRelativeEaseSlider.value);
   ballRollSensitivity = ballRollSensitivitySlider.value;
   ballStopSeconds = ballStopSecondsSlider.value;
   ballCollisionThreshold = ballCollisionSlider.value;
@@ -518,6 +534,8 @@ void updateCollarBigMotion() {
 void updateCollarRelativeBurst() {
   if (!collarRelativeEnabled) {
     collarRelativeLatched = false;
+    collarRelativeAccumMs = 0;
+    collarRelativeLastUpdateMs = 0;
     return;
   }
 
@@ -539,21 +557,21 @@ void updateCollarRelativeBurst() {
   collarRelativeVar = lerp(collarRelativeVar, deviation * deviation, alpha);
   float std = sqrt(max(0.0001f, collarRelativeVar));
 
-  boolean hasHistory = collarRelativeAccumMs >= 6000.0f;
-  float threshold = collarRelativeMean + collarRelativeMargin + std;
+  boolean hasHistory = collarRelativeAccumMs >= 8000.0f;
+  float threshold = collarRelativeMean + collarRelativeMargin + std * 1.2f;
   boolean rising = sample > threshold && collarRelativeLastValue <= threshold;
 
   if (!collarRelativeLatched && hasHistory && rising) {
     float overshoot = sample - threshold;
-    if (overshoot > max(0.06f, std * 0.45f + collarRelativeMargin * 0.25f)) {
-      float amp = constrain(map(overshoot, 0, max(0.45f, std * 2.0f), 0.4f, 1.05f), 0.35f, 1.15f);
+    if (overshoot > max(0.08f, std * 0.55f + collarRelativeMargin * 0.35f)) {
+      float amp = constrain(map(overshoot, 0, max(0.5f, std * 2.2f), 0.35f, 1.05f), 0.3f, 1.1f);
       triggerSample(collarRelativeBurstSample, amp);
       collarRelativeLatched = true;
     }
   }
 
-  float rearmPoint = collarRelativeMean + max(0.03f, collarRelativeMargin * 0.4f);
-  if (sample < rearmPoint || !hasHistory || std < 0.025f) {
+  float rearmPoint = collarRelativeMean + max(0.04f, collarRelativeMargin * 0.45f);
+  if (sample < rearmPoint || !hasHistory || std < 0.03f) {
     collarRelativeLatched = false;
   }
 }
@@ -736,7 +754,7 @@ void drawCollarSection() {
   collarBigMotionSlider.draw();
 
   collarRelativeToggle.draw();
-  collarRelativeMarginSlider.draw();
+  collarRelativeEaseSlider.draw();
 
   fill(190);
   if (soundMode == MODE_COLLAR) {
@@ -841,7 +859,7 @@ void mousePressed() {
     collarRunThresholdSlider,
     collarRunVolumeSlider,
     collarBigMotionSlider,
-    collarRelativeMarginSlider,
+    collarRelativeEaseSlider,
     ballRollSensitivitySlider,
     ballStopSecondsSlider,
     ballCollisionSlider
@@ -884,7 +902,7 @@ void applyPreset(int index) {
     collarRunThresholdSlider.setValue(0.48);
     collarRunVolumeSlider.setValue(0.85);
     collarBigMotionSlider.setValue(1.1);
-    collarRelativeMarginSlider.setValue(0.22);
+    collarRelativeEaseSlider.setValue(collarMarginToEase(0.22));
     ballRollSensitivitySlider.setValue(0.8);
     ballStopSecondsSlider.setValue(6.0);
     ballCollisionSlider.setValue(1.2);
@@ -893,7 +911,7 @@ void applyPreset(int index) {
     collarRunThresholdSlider.setValue(0.6);
     collarRunVolumeSlider.setValue(1.0);
     collarBigMotionSlider.setValue(1.4);
-    collarRelativeMarginSlider.setValue(0.3);
+    collarRelativeEaseSlider.setValue(collarMarginToEase(0.3));
     ballRollSensitivitySlider.setValue(0.6);
     ballStopSecondsSlider.setValue(7.5);
     ballCollisionSlider.setValue(1.4);
@@ -902,7 +920,7 @@ void applyPreset(int index) {
     collarRunThresholdSlider.setValue(0.75);
     collarRunVolumeSlider.setValue(1.1);
     collarBigMotionSlider.setValue(1.7);
-    collarRelativeMarginSlider.setValue(0.36);
+    collarRelativeEaseSlider.setValue(collarMarginToEase(0.36));
     ballRollSensitivitySlider.setValue(0.45);
     ballStopSecondsSlider.setValue(8.5);
     ballCollisionSlider.setValue(1.55);
@@ -913,7 +931,7 @@ void applyPreset(int index) {
     collarRunThresholdSlider.setValue(0.58);
     collarRunVolumeSlider.setValue(0.9);
     collarBigMotionSlider.setValue(1.3);
-    collarRelativeMarginSlider.setValue(0.28);
+    collarRelativeEaseSlider.setValue(collarMarginToEase(0.28));
     ballRollSensitivitySlider.setValue(0.9);
     ballStopSecondsSlider.setValue(5.5);
     ballCollisionSlider.setValue(1.0);
