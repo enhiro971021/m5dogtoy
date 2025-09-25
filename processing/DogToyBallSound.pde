@@ -83,9 +83,7 @@ float collarRelativeMean = 0;
 float collarRelativeVar = 0;
 boolean collarRelativeLatched = false;
 float collarRelativeLastValue = 0;
-float collarRelativeLastUpdate = 0;
-float collarRelativeLastTrigger = 0;
-float collarRelativeCooldownMs = 750;
+float collarRelativeLastUpdateMs = 0;
 
 // Ball settings
 boolean ballRollingEnabled = true;
@@ -523,38 +521,34 @@ void updateCollarRelativeBurst() {
   }
 
   float now = millis();
-  if (collarRelativeLastUpdate == 0) {
-    collarRelativeLastUpdate = now;
+  if (collarRelativeLastUpdateMs == 0) {
+    collarRelativeLastUpdateMs = now;
   }
 
   float sample = collarMotionScore;
-  float dtMs = max(1, now - collarRelativeLastUpdate);
-  collarRelativeLastUpdate = now;
+  float dtMs = max(1, now - collarRelativeLastUpdateMs);
+  collarRelativeLastUpdateMs = now;
 
   float meanTauMs = 5000.0f;
-  float varTauMs = 5500.0f;
-  float alphaMean = constrain(dtMs / meanTauMs, 0, 1);
-  float alphaVar = constrain(dtMs / varTauMs, 0, 1);
+  float alpha = constrain(dtMs / meanTauMs, 0, 1);
+  collarRelativeMean = lerp(collarRelativeMean, sample, alpha);
 
-  collarRelativeMean = lerp(collarRelativeMean, sample, alphaMean);
-  float centered = sample - collarRelativeMean;
-  collarRelativeVar = lerp(collarRelativeVar, centered * centered, alphaVar);
-  float std = sqrt(max(0.0002f, collarRelativeVar));
+  float deviation = sample - collarRelativeMean;
+  collarRelativeVar = lerp(collarRelativeVar, deviation * deviation, alpha);
+  float std = sqrt(max(0.0001f, collarRelativeVar));
 
-  float dynamicThreshold = collarRelativeMean + collarRelativeMargin + std * 0.65f;
-  boolean rising = sample > dynamicThreshold && collarRelativeLastValue <= dynamicThreshold;
-  boolean cooldownReady = (now - collarRelativeLastTrigger) > collarRelativeCooldownMs;
+  float threshold = collarRelativeMean + collarRelativeMargin;
+  boolean rising = sample > threshold && collarRelativeLastValue <= threshold;
 
-  if (!collarRelativeLatched && cooldownReady && rising) {
-    float intensity = centered;
-    float mappedAmp = constrain(map(intensity, collarRelativeMargin, collarRelativeMargin + std * 2.5f, 0.4f, 1.05f), 0.3f, 1.15f);
-    triggerSample(collarRelativeBurstSample, mappedAmp);
+  if (!collarRelativeLatched && rising) {
+    float overshoot = sample - threshold;
+    float amp = constrain(map(overshoot, 0, max(0.35f, std * 1.5f), 0.45f, 1.05f), 0.35f, 1.1f);
+    triggerSample(collarRelativeBurstSample, amp);
     collarRelativeLatched = true;
-    collarRelativeLastTrigger = now;
   }
 
-  float rearmThreshold = collarRelativeMean + max(0.04f, collarRelativeMargin * 0.45f + std * 0.2f);
-  if (sample < rearmThreshold) {
+  float rearmPoint = collarRelativeMean + max(0.025f, collarRelativeMargin * 0.4f);
+  if (sample < rearmPoint) {
     collarRelativeLatched = false;
   }
 }
