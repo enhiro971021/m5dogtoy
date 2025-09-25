@@ -143,7 +143,74 @@ int resolveSerialPortIndex(String[] ports) {
       }
     }
   }
+
+  int preferredByUsb = findPreferredUsbPort(ports);
+  if (preferredByUsb >= 0) {
+    return preferredByUsb;
+  }
+
+  int preferredByCom = findHighestComPort(ports);
+  if (preferredByCom >= 0) {
+    return preferredByCom;
+  }
+
+  if (serialPortIndex >= 0 && serialPortIndex < ports.length) {
+    return serialPortIndex;
+  }
+
   return constrain(serialPortIndex, 0, ports.length - 1);
+}
+
+int findPreferredUsbPort(String[] ports) {
+  String[] usbKeywords = {
+    "usbmodem",
+    "usbserial",
+    "tty.usb",
+    "ttyusb",
+    "ttyacm",
+    "wchusb",
+    "silabs"
+  };
+
+  for (String keyword : usbKeywords) {
+    for (int i = 0; i < ports.length; i++) {
+      if (ports[i].toLowerCase().indexOf(keyword) >= 0) {
+        return i;
+      }
+    }
+  }
+  return -1;
+}
+
+int findHighestComPort(String[] ports) {
+  int bestIndex = -1;
+  int bestNumber = -1;
+
+  for (int i = 0; i < ports.length; i++) {
+    String port = ports[i].toLowerCase();
+    if (!port.startsWith("com")) {
+      continue;
+    }
+
+    String digits = port.replaceAll("[^0-9]", "");
+    if (digits.length() == 0) {
+      continue;
+    }
+
+    int value;
+    try {
+      value = Integer.parseInt(digits);
+    } catch (NumberFormatException e) {
+      continue;
+    }
+
+    if (value > bestNumber) {
+      bestNumber = value;
+      bestIndex = i;
+    }
+  }
+
+  return bestIndex;
 }
 
 void draw() {
