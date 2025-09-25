@@ -84,8 +84,8 @@ void setup() {
 
   runNoiseFilter = new BandPass(this);
   runNoiseFilter.process(rustleNoise);
-  runNoiseFilter.freq(2500);
-  runNoiseFilter.bw(1400);
+  runNoiseFilter.freq(320);
+  runNoiseFilter.bw(260);
 
   runNoiseEnv = new Env(this);
   runToneEnv = new Env(this);
@@ -299,19 +299,19 @@ void updateStateAudio() {
 }
 
 void updateRunningSound() {
-  float targetBed = (motionState == STATE_RUNNING) ? constrain(0.12 + runEnergy * 0.08, 0.12, 0.24) : 0;
-  runningBedAmp = lerp(runningBedAmp, targetBed, 0.1);
+  float targetBed = (motionState == STATE_RUNNING) ? constrain(0.08 + runEnergy * 0.05, 0.08, 0.18) : 0;
+  runningBedAmp = lerp(runningBedAmp, targetBed, 0.12);
 
-  float shimmerFreq = 420 + min(gyroMagnitude, 260) * 1.5;
-  sine3.freq(shimmerFreq + sin(millis() * 0.01) * 20);
+  float bedFreq = 160 + min(runEnergy * 90, 110);
+  sine3.freq(bedFreq + sin(millis() * 0.004) * 8);
   sine3.amp(runningBedAmp);
 
   if (motionState == STATE_RUNNING) {
-    float highThreshold = 0.7;
-    float resetThreshold = 0.3;
-    float intensity = constrain(map(abs(accelHPInstant), 0.4, 2.0, 0.6, 1.4), 0.6, 1.4);
+    float highThreshold = 0.55;
+    float resetThreshold = 0.25;
+    float intensity = constrain(map(abs(accelHPInstant), 0.35, 1.8, 0.6, 1.6), 0.6, 1.6);
 
-    if (accelHPInstant > highThreshold && stepArmed && millis() - lastStepTime > 110) {
+    if (accelHPInstant > highThreshold && stepArmed && millis() - lastStepTime > 120) {
       triggerRunStep(intensity);
       stepArmed = false;
       lastStepTime = millis();
@@ -324,41 +324,43 @@ void updateRunningSound() {
 }
 
 void triggerRunStep(float intensity) {
-  float noiseLevel = constrain(0.08 * intensity, 0.06, 0.22);
-  runNoiseEnv.play(rustleNoise, 0.004, 0.05, noiseLevel, 0.12);
+  float noiseLevel = constrain(0.12 * intensity, 0.08, 0.28);
+  runNoiseFilter.freq(260 + random(-50, 60));
+  runNoiseEnv.play(rustleNoise, 0.002, 0.06, noiseLevel, 0.16);
 
-  float toneFreq = constrain(900 + (intensity - 0.6) * 400 + random(-40, 40), 650, 1500);
+  float toneFreq = constrain(150 + (intensity - 0.6) * 80 + random(-10, 10), 120, 220);
   sine2.freq(toneFreq);
-  float toneLevel = constrain(0.1 * intensity, 0.05, 0.2);
-  runToneEnv.play(sine2, 0.008, 0.04, toneLevel, 0.09);
+  float toneLevel = constrain(0.22 * intensity, 0.16, 0.32);
+  runToneEnv.play(sine2, 0.001, 0.05, toneLevel, 0.18);
 }
 
 void updateShakeSound() {
-  float targetBell = (motionState == STATE_SHAKE) ? constrain(map(shakeEnergy, 60, 180, 0.14, 0.3), 0.14, 0.3) : 0;
-  float targetChirp = (motionState == STATE_SHAKE) ? constrain(map(shakeEnergy, 60, 180, 0.08, 0.18), 0.08, 0.18) : 0;
+  float targetBell = (motionState == STATE_SHAKE) ? constrain(map(shakeEnergy, 40, 200, 0.1, 0.24), 0.1, 0.24) : 0;
+  float targetChirp = (motionState == STATE_SHAKE) ? constrain(map(shakeEnergy, 40, 200, 0.05, 0.14), 0.05, 0.14) : 0;
 
-  shakeBellAmp = lerp(shakeBellAmp, targetBell, 0.12);
-  shakeChirpAmp = lerp(shakeChirpAmp, targetChirp, 0.12);
+  shakeBellAmp = lerp(shakeBellAmp, targetBell, 0.15);
+  shakeChirpAmp = lerp(shakeChirpAmp, targetChirp, 0.15);
 
-  float baseFreq = constrain(map(gyroMagnitude, 100, 320, 900, 1700), 900, 1700);
-  float wobble = sin(millis() * 0.04) * 120;
+  float baseFreq = constrain(map(gyroMagnitude, 80, 320, 620, 1100), 520, 1150);
+  float wobble = sin(millis() * 0.06) * 55;
   bellOsc.freq(baseFreq + wobble);
   bellOsc.amp(shakeBellAmp);
 
-  chirp2.freq((baseFreq * 1.25) + wobble * 0.5);
+  float harmonic = baseFreq * 1.12 + cos(millis() * 0.09) * 35;
+  chirp2.freq(harmonic);
   chirp2.amp(shakeChirpAmp);
 }
 
 void updateIdleSound() {
   float targetAmp = 0;
   if (motionState == STATE_STILL) {
-    targetAmp = 0.14;
+    targetAmp = 0.08;
   } else if (motionState == STATE_IDLE) {
-    targetAmp = 0.05;
+    targetAmp = 0.04;
   }
 
   idlePadAmp = lerp(idlePadAmp, targetAmp, 0.05);
-  float padFreq = 180 + sin(millis() * 0.002) * 12 + runEnergy * 20;
+  float padFreq = 110 + sin(millis() * 0.0015) * 6 + runEnergy * 10;
   sine1.freq(padFreq);
   sine1.amp(idlePadAmp);
 }
