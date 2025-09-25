@@ -434,7 +434,8 @@ void triggerSample(AudioSample sample, float amp) {
   }
 
   float scaled = constrain(amp, 0.1, 1.0);
-  sample.trigger(scaled);
+  sample.setGain(ampToGainDb(scaled));
+  sample.trigger();
 }
 
 void setLoopGain(AudioPlayer player, float amp) {
