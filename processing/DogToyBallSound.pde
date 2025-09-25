@@ -1,18 +1,17 @@
 import oscP5.*;
 import netP5.*;
-import processing.sound.*;
 import processing.serial.*;
+import ddf.minim.*;
 
 OscP5 oscP5;
-// 基本音源
-SinOsc sine1, sine2, sine3;
-TriOsc bellOsc;
-SinOsc chirp2;
-PinkNoise rustleNoise;
-BandPass runNoiseFilter;
-
-// エンベロープ
-Env runNoiseEnv, runToneEnv;
+Minim minim;
+AudioSample runStepSample;
+AudioSample shakeHitSample;
+AudioPlayer runningLoop;
+AudioPlayer idleLoop;
+AudioPlayer shakeLoop;
+boolean audioReady = false;
+String audioStatusMessage = "";
 
 // シリアル入力
 Serial m5Serial;
@@ -61,7 +60,8 @@ float stillCandidateSince = 0;
 float runningBedAmp = 0;
 float shakeBellAmp = 0;
 float idlePadAmp = 0;
-float shakeChirpAmp = 0;
+
+float lastShakeHitTime = 0;
 
 
 void setup() {
@@ -75,29 +75,107 @@ void setup() {
     serialStatusMessage = "Serial disabled";
   }
 
-  sine1 = new SinOsc(this);
-  sine2 = new SinOsc(this);
-  sine3 = new SinOsc(this);
-  bellOsc = new TriOsc(this);
-  chirp2 = new SinOsc(this);
-  rustleNoise = new PinkNoise(this);
+  minim = new Minim(this);
+  loadAudioAssets();
+}
 
-  runNoiseFilter = new BandPass(this);
-  runNoiseFilter.process(rustleNoise);
-  runNoiseFilter.freq(320);
-  runNoiseFilter.bw(260);
+void loadAudioAssets() {
+  int availableCount = 0;
+  String missingList = "";
 
-  runNoiseEnv = new Env(this);
-  runToneEnv = new Env(this);
+  runStepSample = loadSampleSafe("run_step.wav");
+  if (runStepSample != null) {
+    availableCount++;
+  } else {
+    missingList = appendMissing(missingList, "run_step.wav");
+  }
 
-  rustleNoise.play();
-  rustleNoise.amp(0);
+  shakeHitSample = loadSampleSafe("shake_hit.wav");
+  if (shakeHitSample != null) {
+    availableCount++;
+  } else {
+    missingList = appendMissing(missingList, "shake_hit.wav");
+  }
 
-  sine1.amp(0); sine1.play();
-  sine2.amp(0); sine2.play();
-  sine3.amp(0); sine3.play();
-  bellOsc.amp(0); bellOsc.play();
-  chirp2.amp(0); chirp2.play();
+  runningLoop = loadLoopSafe("running_loop.wav");
+  if (runningLoop != null) {
+    availableCount++;
+  } else {
+    missingList = appendMissing(missingList, "running_loop.wav");
+  }
+
+  idleLoop = loadLoopSafe("idle_pad.wav");
+  if (idleLoop != null) {
+    availableCount++;
+  } else {
+    missingList = appendMissing(missingList, "idle_pad.wav");
+  }
+
+  shakeLoop = loadLoopSafe("shake_loop.wav");
+  if (shakeLoop != null) {
+    availableCount++;
+  } else {
+    missingList = appendMissing(missingList, "shake_loop.wav");
+  }
+
+  audioReady = availableCount > 0;
+  if (!audioReady) {
+    audioStatusMessage = "Audio files not found";
+  } else if (missingList.length() == 0) {
+    audioStatusMessage = "Audio ready (5/5)";
+  } else {
+    audioStatusMessage = "Loaded " + availableCount + "/5, missing: " + missingList;
+  }
+}
+
+String appendMissing(String current, String name) {
+  if (current == null || current.length() == 0) {
+    return name;
+  }
+  return current + ", " + name;
+}
+
+AudioSample loadSampleSafe(String fileName) {
+  try {
+    AudioSample sample = minim.loadSample(fileName, 1024);
+    if (sample == null) {
+      println("Audio sample missing -> " + fileName);
+    }
+    return sample;
+  } catch (Exception e) {
+    println("Failed to load sample " + fileName);
+    e.printStackTrace();
+    return null;
+  }
+}
+
+AudioPlayer loadLoopSafe(String fileName) {
+  try {
+    AudioPlayer player = minim.loadFile(fileName, 2048);
+    if (player == null) {
+      println("Audio loop missing -> " + fileName);
+      return null;
+    }
+    player.loop();
+    player.setGain(-80);
+    return player;
+  } catch (Exception e) {
+    println("Failed to load loop " + fileName);
+    e.printStackTrace();
+    return null;
+  }
+}
+
+void closeSample(AudioSample sample) {
+  if (sample != null) {
+    sample.close();
+  }
+}
+
+void closePlayer(AudioPlayer player) {
+  if (player != null) {
+    player.close();
+  }
 }
 
 void initSerialInput() {
@@ -283,8 +361,7 @@ void onMotionStateChange(int newState, int oldState) {
 
   if (newState == STATE_SHAKE) {
     // シェイク音はすぐに立ち上げる
-    shakeBellAmp = max(shakeBellAmp, 0.12);
-    shakeChirpAmp = max(shakeChirpAmp, 0.08);
+    shakeBellAmp = max(shakeBellAmp, 0.9);
   }
 
   if (newState == STATE_STILL) {
@@ -299,12 +376,9 @@ void updateStateAudio() {
 }
 
 void updateRunningSound() {
-  float targetBed = (motionState == STATE_RUNNING) ? constrain(0.08 + runEnergy * 0.05, 0.08, 0.18) : 0;
-  runningBedAmp = lerp(runningBedAmp, targetBed, 0.12);
-
-  float bedFreq = 160 + min(runEnergy * 90, 110);
-  sine3.freq(bedFreq + sin(millis() * 0.004) * 8);
-  sine3.amp(runningBedAmp);
+  float targetBed = (motionState == STATE_RUNNING) ? constrain(0.45 + runEnergy * 0.6, 0.45, 1.2) : 0;
+  runningBedAmp = lerp(runningBedAmp, targetBed, 0.15);
+  setLoopGain(runningLoop, runningBedAmp);
 
   if (motionState == STATE_RUNNING) {
     float highThreshold = 0.55;
@@ -324,45 +398,60 @@ void updateRunningSound() {
 }
 
 void triggerRunStep(float intensity) {
-  float noiseLevel = constrain(0.12 * intensity, 0.08, 0.28);
-  runNoiseFilter.freq(260 + random(-50, 60));
-  runNoiseEnv.play(rustleNoise, 0.002, 0.06, noiseLevel, 0.16);
-
-  float toneFreq = constrain(150 + (intensity - 0.6) * 80 + random(-10, 10), 120, 220);
-  sine2.freq(toneFreq);
-  float toneLevel = constrain(0.22 * intensity, 0.16, 0.32);
-  runToneEnv.play(sine2, 0.001, 0.05, toneLevel, 0.18);
+  float amp = constrain(0.35 + (intensity - 0.6) * 0.5, 0.2, 1.3);
+  triggerSample(runStepSample, amp);
 }
 
 void updateShakeSound() {
-  float targetBell = (motionState == STATE_SHAKE) ? constrain(map(shakeEnergy, 40, 200, 0.1, 0.24), 0.1, 0.24) : 0;
-  float targetChirp = (motionState == STATE_SHAKE) ? constrain(map(shakeEnergy, 40, 200, 0.05, 0.14), 0.05, 0.14) : 0;
+  float targetBell = (motionState == STATE_SHAKE) ? constrain(map(shakeEnergy, 40, 220, 0.5, 1.3), 0.4, 1.4) : 0;
+  shakeBellAmp = lerp(shakeBellAmp, targetBell, 0.18);
+  setLoopGain(shakeLoop, shakeBellAmp);
 
-  shakeBellAmp = lerp(shakeBellAmp, targetBell, 0.15);
-  shakeChirpAmp = lerp(shakeChirpAmp, targetChirp, 0.15);
-
-  float baseFreq = constrain(map(gyroMagnitude, 80, 320, 620, 1100), 520, 1150);
-  float wobble = sin(millis() * 0.06) * 55;
-  bellOsc.freq(baseFreq + wobble);
-  bellOsc.amp(shakeBellAmp);
-
-  float harmonic = baseFreq * 1.12 + cos(millis() * 0.09) * 35;
-  chirp2.freq(harmonic);
-  chirp2.amp(shakeChirpAmp);
+  if (motionState == STATE_SHAKE) {
+    if (gyroHPInstant > 80 && millis() - lastShakeHitTime > 160) {
+      float hitAmp = constrain(map(gyroHPInstant, 80, 200, 0.35, 1.2), 0.3, 1.3);
+      triggerSample(shakeHitSample, hitAmp);
+      lastShakeHitTime = millis();
+    }
+  }
 }
 
 void updateIdleSound() {
   float targetAmp = 0;
   if (motionState == STATE_STILL) {
-    targetAmp = 0.08;
+    targetAmp = 0.6;
   } else if (motionState == STATE_IDLE) {
-    targetAmp = 0.04;
+    targetAmp = 0.35;
   }
 
   idlePadAmp = lerp(idlePadAmp, targetAmp, 0.05);
-  float padFreq = 110 + sin(millis() * 0.0015) * 6 + runEnergy * 10;
-  sine1.freq(padFreq);
-  sine1.amp(idlePadAmp);
+  setLoopGain(idleLoop, idlePadAmp);
+}
+
+void triggerSample(AudioSample sample, float amp) {
+  if (sample == null) {
+    return;
+  }
+
+  float scaled = constrain(amp, 0.1, 1.0);
+  sample.trigger(scaled);
+}
+
+void setLoopGain(AudioPlayer player, float amp) {
+  if (player == null) {
+    return;
+  }
+
+  float gainDb = ampToGainDb(amp);
+  player.setGain(gainDb);
+}
+
+float ampToGainDb(float amp) {
+  if (amp <= 0.0001) {
+    return -80;
+  }
+  float mapped = map(constrain(amp, 0, 1.4), 0, 1.4, -60, -4);
+  return constrain(mapped, -80, 6);
 }
 
 void drawStatus() {
@@ -407,10 +496,15 @@ void drawStatus() {
     text(serialLine, 20, 320);
   }
 
+  fill(190);
+  if (audioStatusMessage != null && audioStatusMessage.length() > 0) {
+    text("Audio: " + audioStatusMessage, 20, 360);
+  }
+
   fill(180);
-  text("Running: paw taps + collar shimmer", 20, 350);
-  text("Shake: collar jingle bursts", 20, 370);
-  text("Stop: calm pad with gentle wobble", 20, 390);
+  text("Running: step thumps + low layer", 20, 380);
+  text("Shake: layered rattles", 20, 400);
+  text("Stop: ambient tail", 20, 420);
 }
 
 String stateName(int state) {
@@ -498,11 +592,13 @@ void parseSerialLine(String raw) {
 }
 
 void exit() {
-  sine1.stop();
-  sine2.stop();
-  sine3.stop();
-  bellOsc.stop();
-  chirp2.stop();
-  rustleNoise.stop();
+  closeSample(runStepSample);
+  closeSample(shakeHitSample);
+  closePlayer(runningLoop);
+  closePlayer(idleLoop);
+  closePlayer(shakeLoop);
+  if (minim != null) {
+    minim.stop();
+  }
   super.exit();
 }
