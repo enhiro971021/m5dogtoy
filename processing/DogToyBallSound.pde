@@ -3,345 +3,277 @@ import netP5.*;
 import processing.sound.*;
 
 OscP5 oscP5;
-// 加速度用の音（前のバージョンから復活）
+// 基本音源
 SinOsc sine1, sine2, sine3;
-TriOsc squeakOsc;
-PinkNoise rustleNoise;
-// ジャイロ用の音（種類を増やす）
-SinOsc chirp1, chirp2;
 TriOsc bellOsc;
-SawOsc dogBark1, dogBark2;
-// エフェクト
-Env envelope, squeakEnv, chirpEnv, barkEnv;
-BandPass bandPass;
-LowPass dogFilter;
+SinOsc chirp2;
+PinkNoise rustleNoise;
+BandPass runNoiseFilter;
 
-float[] acc = new float[3];  // 加速度 [x, y, z]
-float[] gyro = new float[3]; // ジャイロ [x, y, z]
+// エンベロープ
+Env runNoiseEnv, runToneEnv;
 
-float accelMagnitude = 0;    // 加速度の大きさ
-float gyroMagnitude = 0;     // ジャイロの大きさ
-float prevAccelMag = 0;      // 前フレームの加速度
-float soundThreshold = 2.0;   // 加速度音の閾値
-float gyroThreshold = 60.0;   // ジャイロ音の閾値
+float[] acc = new float[3];   // 加速度 [x, y, z]
+float[] gyro = new float[3];  // ジャイロ [x, y, z]
 
-boolean isThrown = false;     // 投球中フラグ
-boolean isSqueaking = false;  // キュッキュッ音フラグ
-boolean isPlayingGyroSound = false;   // ジャイロ音フラグ
-float throwTimer = 0;         
-float squeakTimer = 0;
-float gyroSoundTimer = 0;
-float lastGyroSoundTime = 0;
-int currentGyroSound = 0;     // 現在のジャイロ音の種類
+float accelMagnitude = 0;     // 加速度の大きさ
+float gyroMagnitude = 0;      // ジャイロの大きさ
+float accelWithoutGravity = 0;
+
+// 状態管理
+final int STATE_IDLE = 0;
+final int STATE_RUNNING = 1;
+final int STATE_SHAKE = 2;
+final int STATE_STILL = 3;
+
+int motionState = STATE_IDLE;
+int previousState = STATE_IDLE;
+
+// フィルタ値とスコア
+float accelMean = 0;
+float accelHP = 0;
+float accelHPInstant = 0;
+float gyroMean = 0;
+float gyroHP = 0;
+float gyroHPInstant = 0;
+float runEnergy = 0;
+float shakeEnergy = 0;
+
+// ステップ検出
+boolean stepArmed = true;
+float lastStepTime = 0;
+
+// 静止判定
+float stillCandidateSince = 0;
+
+// 音量スムージング
+float runningBedAmp = 0;
+float shakeBellAmp = 0;
+float idlePadAmp = 0;
+float shakeChirpAmp = 0;
+
 
 void setup() {
   size(400, 450);
   oscP5 = new OscP5(this, 8000);
   textSize(16);
-  
-  // 加速度用サウンドの初期化
+
   sine1 = new SinOsc(this);
   sine2 = new SinOsc(this);
   sine3 = new SinOsc(this);
-  squeakOsc = new TriOsc(this);
-  rustleNoise = new PinkNoise(this);
-  
-  // ジャイロ用サウンドの初期化
-  chirp1 = new SinOsc(this);
-  chirp2 = new SinOsc(this);
   bellOsc = new TriOsc(this);
-  dogBark1 = new SawOsc(this);
-  dogBark2 = new SawOsc(this);
-  
-  // エフェクトの初期化
-  envelope = new Env(this);
-  squeakEnv = new Env(this);
-  chirpEnv = new Env(this);
-  barkEnv = new Env(this);
-  bandPass = new BandPass(this);
-  dogFilter = new LowPass(this);
-  
-  // ノイズ設定
+  chirp2 = new SinOsc(this);
+  rustleNoise = new PinkNoise(this);
+
+  runNoiseFilter = new BandPass(this);
+  runNoiseFilter.process(rustleNoise);
+  runNoiseFilter.freq(2500);
+  runNoiseFilter.bw(1400);
+
+  runNoiseEnv = new Env(this);
+  runToneEnv = new Env(this);
+
   rustleNoise.play();
-  bandPass.process(rustleNoise);
-  bandPass.freq(3000);
-  bandPass.bw(1000);
   rustleNoise.amp(0);
-  
-  // 犬の鳴き声フィルター
-  dogFilter.process(dogBark1);
-  dogFilter.freq(1000);
-  
-  // すべての音源を初期化
+
   sine1.amp(0); sine1.play();
   sine2.amp(0); sine2.play();
   sine3.amp(0); sine3.play();
-  squeakOsc.amp(0); squeakOsc.play();
-  chirp1.amp(0); chirp1.play();
-  chirp2.amp(0); chirp2.play();
   bellOsc.amp(0); bellOsc.play();
-  dogBark1.amp(0); dogBark1.play();
-  dogBark2.amp(0); dogBark2.play();
+  chirp2.amp(0); chirp2.play();
 }
 
 void draw() {
   background(50);
   fill(255);
 
-  text("🐕 Dog Toy Ball Sound 🎾", 20, 30);
+  text("🐕 Motion Reactive Soundboard", 20, 30);
 
-  // 加速度表示
-  fill(255, 200, 100);
-  text("Acceleration (Throw sounds):", 20, 70);
-  fill(255);
-  text("X:" + nf(acc[0],1,2) + " Y:" + nf(acc[1],1,2) + " Z:" + nf(acc[2],1,2), 20, 90);
-  text("Magnitude: " + nf(accelMagnitude, 1, 2), 20, 110);
-
-  // ジャイロ表示
-  fill(100, 200, 255);
-  text("Gyroscope (Various sounds):", 20, 150);
-  fill(255);
-  text("X:" + nf(gyro[0],1,2) + " Y:" + nf(gyro[1],1,2) + " Z:" + nf(gyro[2],1,2), 20, 170);
-  text("Magnitude: " + nf(gyroMagnitude, 1, 2) + " deg/s", 20, 190);
-  
-  // 前フレームの加速度を保存
-  prevAccelMag = accelMagnitude;
-  
-  // 加速度とジャイロの大きさを計算
   accelMagnitude = sqrt(acc[0]*acc[0] + acc[1]*acc[1] + acc[2]*acc[2]);
   gyroMagnitude = sqrt(gyro[0]*gyro[0] + gyro[1]*gyro[1] + gyro[2]*gyro[2]);
-  
-  // 急な動きを検出
-  float accelChange = abs(accelMagnitude - prevAccelMag);
-  
-  // === 加速度による音の制御（前のバージョンの音）===
-  if (accelMagnitude > soundThreshold && !isThrown) {
-    isThrown = true;
-    throwTimer = millis();
-    playDogExcitingSound(accelMagnitude);
-  }
-  
-  if (accelChange > 1.5 && !isSqueaking) {
-    isSqueaking = true;
-    squeakTimer = millis();
-    playSqueak();
-  }
-  
-  // === ジャイロによる音の制御（1秒に1回チェック）===
-  if (gyroMagnitude > gyroThreshold && !isPlayingGyroSound && 
-      millis() - lastGyroSoundTime > 1000) {
-    isPlayingGyroSound = true;
-    gyroSoundTimer = millis();
-    lastGyroSoundTime = millis();
-    
-    // ランダムに音を選択
-    currentGyroSound = int(random(4));
-    playGyroSound(currentGyroSound);
-  }
-  
-  // 投球音の処理
-  if (isThrown) {
-    updateThrowSound();
-  }
-  
-  // キュッキュッ音の処理
-  if (isSqueaking) {
-    float elapsed = millis() - squeakTimer;
-    if (elapsed > 300) {
-      isSqueaking = false;
-      squeakOsc.amp(0);
-    }
-  }
-  
-  // ジャイロ音の処理
-  if (isPlayingGyroSound) {
-    updateGyroSound();
-  }
-  
-  // 状態表示
+
+  updateMotionEstimates();
+  updateStateAudio();
   drawStatus();
 }
 
-void updateThrowSound() {
-  float elapsed = millis() - throwTimer;
-  
-  // ウォブル効果
-  float wobble = sin(elapsed * 0.02) * 200;
-  
-  sine1.freq(2000 + wobble);
-  sine2.freq(2500 - wobble);
-  sine3.freq(3000 + wobble * 0.5);
-  
-  // カサカサ音
-  float rustleAmp = map(accelMagnitude, 0, 15, 0, 0.2);
-  rustleNoise.amp(rustleAmp * 0.3);
-  
-  // 音量の変化
-  float amp = map(elapsed, 0, 800, 0.3, 0);
-  amp = constrain(amp, 0, 0.3);
-  
-  sine1.amp(amp * 0.4);
-  sine2.amp(amp * 0.3);
-  sine3.amp(amp * 0.2);
-  
-  if (elapsed > 800) {
-    isThrown = false;
-    sine1.amp(0);
-    sine2.amp(0);
-    sine3.amp(0);
-    rustleNoise.amp(0);
-  }
-}
+void updateMotionEstimates() {
+  accelWithoutGravity = max(0, accelMagnitude - 1.0);
+  float accelAlpha = 0.18;
+  accelMean = lerp(accelMean, accelWithoutGravity, accelAlpha);
+  accelHPInstant = accelWithoutGravity - accelMean;
+  float accelPulse = abs(accelHPInstant);
+  accelHP = lerp(accelHP, accelPulse, 0.25);
 
-void updateGyroSound() {
-  float elapsed = millis() - gyroSoundTimer;
-  
-  switch(currentGyroSound) {
-    case 0: // ぴよぴよ音
-      updateChirpSound(elapsed);
-      break;
-    case 1: // ベル音
-      updateBellSound(elapsed);
-      break;
-    case 2: // 犬の鳴き声
-      updateDogBarkSound(elapsed);
-      break;
-    case 3: // ランダムな効果音
-      updateRandomSound(elapsed);
-      break;
-  }
-  
-  if (elapsed > 1500) {
-    stopAllGyroSounds();
-    isPlayingGyroSound = false;
-  }
-}
+  float gyroAlpha = 0.12;
+  gyroMean = lerp(gyroMean, gyroMagnitude, gyroAlpha);
+  gyroHPInstant = gyroMagnitude - gyroMean;
+  float gyroPulse = abs(gyroHPInstant);
+  gyroHP = lerp(gyroHP, gyroPulse, 0.3);
 
-void updateChirpSound(float elapsed) {
-  float chirpPattern = sin(elapsed * 0.01) * 0.5 + 0.5;
-  float freq1 = 2500 + chirpPattern * 1000;
-  float freq2 = 3000 + chirpPattern * 800;
-  
-  chirp1.freq(freq1);
-  chirp2.freq(freq2);
-  chirp1.amp(chirpPattern * 0.2);
-  chirp2.amp(chirpPattern * 0.15);
-}
+  runEnergy = lerp(runEnergy, accelPulse, 0.15);
+  shakeEnergy = lerp(shakeEnergy, gyroPulse, 0.2);
 
-void updateBellSound(float elapsed) {
-  float bellFreq = 1000 + sin(elapsed * 0.005) * 100;
-  bellOsc.freq(bellFreq);
-  float amp = map(elapsed, 0, 1000, 0.25, 0);
-  bellOsc.amp(constrain(amp, 0, 0.25));
-}
-
-void updateDogBarkSound(float elapsed) {
-  // 犬の鳴き声パターン
-  if (elapsed < 200) {
-    dogBark1.freq(200 + random(-20, 20));
-    dogBark2.freq(400 + random(-40, 40));
-    dogFilter.freq(800 + random(-100, 100));
-    dogBark1.amp(0.3);
-    dogBark2.amp(0.2);
-  } else if (elapsed < 300) {
-    dogBark1.amp(0);
-    dogBark2.amp(0);
-  } else if (elapsed < 500) {
-    dogBark1.freq(180 + random(-20, 20));
-    dogBark2.freq(360 + random(-40, 40));
-    dogFilter.freq(900 + random(-100, 100));
-    dogBark1.amp(0.35);
-    dogBark2.amp(0.25);
+  if (gyroMagnitude < 25 && accelWithoutGravity < 0.2) {
+    if (stillCandidateSince == 0) {
+      stillCandidateSince = millis();
+    }
   } else {
-    float fadeOut = map(elapsed, 500, 700, 0.3, 0);
-    dogBark1.amp(constrain(fadeOut, 0, 0.3));
-    dogBark2.amp(constrain(fadeOut * 0.7, 0, 0.2));
+    stillCandidateSince = 0;
+  }
+
+  evaluateMotionState(accelPulse, gyroMagnitude, gyroPulse);
+}
+
+void evaluateMotionState(float accelPulse, float gyroMag, float gyroPulse) {
+  int newState = motionState;
+
+  boolean shakeDetected = (gyroMag > 180 && gyroPulse > 90) || gyroPulse > 140;
+  if (shakeDetected) {
+    newState = STATE_SHAKE;
+  } else if (accelPulse > 0.45 && gyroMag > 35) {
+    newState = STATE_RUNNING;
+  } else if (stillCandidateSince > 0 && millis() - stillCandidateSince > 1200) {
+    newState = STATE_STILL;
+  } else {
+    newState = STATE_IDLE;
+  }
+
+  if (newState != motionState) {
+    previousState = motionState;
+    motionState = newState;
+    onMotionStateChange(motionState, previousState);
   }
 }
 
-void updateRandomSound(float elapsed) {
-  // ランダムな楽しい音
-  float freq = 1500 + sin(elapsed * 0.02) * 500 + random(-100, 100);
-  sine2.freq(freq);
-  sine2.amp(0.15);
-}
+void onMotionStateChange(int newState, int oldState) {
+  if (newState != STATE_RUNNING) {
+    stepArmed = true;
+  }
 
-void playDogExcitingSound(float magnitude) {
-  float attackTime = 0.01;
-  float sustainTime = 0.05;
-  float releaseTime = 0.5;
-  
-  sine1.freq(2000);
-  sine2.freq(2500);
-  sine3.freq(3000);
-  
-  envelope.play(sine1, attackTime, sustainTime, 0.4, releaseTime);
-}
+  if (newState == STATE_SHAKE) {
+    // シェイク音はすぐに立ち上げる
+    shakeBellAmp = max(shakeBellAmp, 0.12);
+    shakeChirpAmp = max(shakeChirpAmp, 0.08);
+  }
 
-void playSqueak() {
-  float freq = random(1800, 3500);
-  squeakOsc.freq(freq);
-  squeakEnv.play(squeakOsc, 0.01, 0.05, 0.5, 0.2);
-}
-
-void playGyroSound(int type) {
-  // 音の種類に応じて初期設定
-  switch(type) {
-    case 2: // 犬の鳴き声の場合は特別な処理
-      println("Playing dog bark!");
-      break;
+  if (newState == STATE_STILL) {
+    idlePadAmp = max(idlePadAmp, 0.1);
   }
 }
 
-void stopAllGyroSounds() {
-  chirp1.amp(0);
-  chirp2.amp(0);
-  bellOsc.amp(0);
-  dogBark1.amp(0);
-  dogBark2.amp(0);
+void updateStateAudio() {
+  updateRunningSound();
+  updateShakeSound();
+  updateIdleSound();
+}
+
+void updateRunningSound() {
+  float targetBed = (motionState == STATE_RUNNING) ? constrain(0.12 + runEnergy * 0.08, 0.12, 0.24) : 0;
+  runningBedAmp = lerp(runningBedAmp, targetBed, 0.1);
+
+  float shimmerFreq = 420 + min(gyroMagnitude, 260) * 1.5;
+  sine3.freq(shimmerFreq + sin(millis() * 0.01) * 20);
+  sine3.amp(runningBedAmp);
+
+  if (motionState == STATE_RUNNING) {
+    float highThreshold = 0.7;
+    float resetThreshold = 0.3;
+    float intensity = constrain(map(abs(accelHPInstant), 0.4, 2.0, 0.6, 1.4), 0.6, 1.4);
+
+    if (accelHPInstant > highThreshold && stepArmed && millis() - lastStepTime > 110) {
+      triggerRunStep(intensity);
+      stepArmed = false;
+      lastStepTime = millis();
+    }
+
+    if (abs(accelHPInstant) < resetThreshold) {
+      stepArmed = true;
+    }
+  }
+}
+
+void triggerRunStep(float intensity) {
+  float noiseLevel = constrain(0.08 * intensity, 0.06, 0.22);
+  runNoiseEnv.play(rustleNoise, 0.004, 0.05, noiseLevel, 0.12);
+
+  float toneFreq = constrain(900 + (intensity - 0.6) * 400 + random(-40, 40), 650, 1500);
+  sine2.freq(toneFreq);
+  float toneLevel = constrain(0.1 * intensity, 0.05, 0.2);
+  runToneEnv.play(sine2, 0.008, 0.04, toneLevel, 0.09);
+}
+
+void updateShakeSound() {
+  float targetBell = (motionState == STATE_SHAKE) ? constrain(map(shakeEnergy, 60, 180, 0.14, 0.3), 0.14, 0.3) : 0;
+  float targetChirp = (motionState == STATE_SHAKE) ? constrain(map(shakeEnergy, 60, 180, 0.08, 0.18), 0.08, 0.18) : 0;
+
+  shakeBellAmp = lerp(shakeBellAmp, targetBell, 0.12);
+  shakeChirpAmp = lerp(shakeChirpAmp, targetChirp, 0.12);
+
+  float baseFreq = constrain(map(gyroMagnitude, 100, 320, 900, 1700), 900, 1700);
+  float wobble = sin(millis() * 0.04) * 120;
+  bellOsc.freq(baseFreq + wobble);
+  bellOsc.amp(shakeBellAmp);
+
+  chirp2.freq((baseFreq * 1.25) + wobble * 0.5);
+  chirp2.amp(shakeChirpAmp);
+}
+
+void updateIdleSound() {
+  float targetAmp = 0;
+  if (motionState == STATE_STILL) {
+    targetAmp = 0.14;
+  } else if (motionState == STATE_IDLE) {
+    targetAmp = 0.05;
+  }
+
+  idlePadAmp = lerp(idlePadAmp, targetAmp, 0.05);
+  float padFreq = 180 + sin(millis() * 0.002) * 12 + runEnergy * 20;
+  sine1.freq(padFreq);
+  sine1.amp(idlePadAmp);
 }
 
 void drawStatus() {
-  textSize(20);
-  
-  float y = 250;
-  if (isThrown) {
-    fill(255, 200, 50);
-    text("🎾 Wheee!", 20, y);
-  } else if (isSqueaking) {
-    fill(255, 100, 100);
-    text("🦴 Squeak!", 20, y);
+  fill(255, 200, 100);
+  text("Acceleration:", 20, 70);
+  fill(255);
+  text("X:" + nf(acc[0],1,2) + " Y:" + nf(acc[1],1,2) + " Z:" + nf(acc[2],1,2), 20, 90);
+  text("|a|:" + nf(accelMagnitude, 1, 2) + "  |a|-g:" + nf(accelWithoutGravity, 1, 2), 20, 110);
+
+  fill(100, 200, 255);
+  text("Gyroscope:", 20, 150);
+  fill(255);
+  text("X:" + nf(gyro[0],1,2) + " Y:" + nf(gyro[1],1,2) + " Z:" + nf(gyro[2],1,2), 20, 170);
+  text("|ω|:" + nf(gyroMagnitude, 1, 2) + " deg/s", 20, 190);
+
+  fill(220);
+  text("State: " + stateName(motionState), 20, 230);
+  text("Run energy:" + nf(runEnergy,1,2) + "  Shake energy:" + nf(shakeEnergy,1,2), 20, 250);
+  text("HP accel:" + nf(accelHP,1,2) + "  HP gyro:" + nf(gyroHP,1,2), 20, 270);
+
+  if (stillCandidateSince > 0 && motionState != STATE_STILL) {
+    float countdown = max(0, 1.2 - (millis() - stillCandidateSince) / 1000.0);
+    fill(200, 220, 255);
+    text("Still latch in " + nf(countdown, 1, 2) + " s", 20, 300);
   }
-  
-  y = 280;
-  if (isPlayingGyroSound) {
-    switch(currentGyroSound) {
-      case 0:
-        fill(100, 200, 255);
-        text("🐦 Chirp chirp!", 20, y);
-        break;
-      case 1:
-        fill(255, 255, 100);
-        text("🔔 Ding ding!", 20, y);
-        break;
-      case 2:
-        fill(255, 100, 100);
-        text("🐕 Woof woof!", 20, y);
-        break;
-      case 3:
-        fill(200, 100, 255);
-        text("✨ Boing!", 20, y);
-        break;
-    }
+
+  fill(180);
+  text("Running: paw taps + collar shimmer", 20, 350);
+  text("Shake: collar jingle bursts", 20, 370);
+  text("Stop: calm pad with gentle wobble", 20, 390);
+}
+
+String stateName(int state) {
+  switch(state) {
+    case STATE_RUNNING:
+      return "RUNNING";
+    case STATE_SHAKE:
+      return "SHAKE";
+    case STATE_STILL:
+      return "STILL";
+    default:
+      return "IDLE";
   }
-  
-  // 音の種類説明
-  textSize(14);
-  fill(200);
-  text("Throw: Squeak + Exciting sounds", 20, 350);
-  text("Rotate: Random from 4 different sounds", 20, 370);
-  text("- Bird chirps, Bell, Dog bark, Random", 20, 390);
-  text("Next sound in: " + nf((1000 - (millis() - lastGyroSoundTime))/1000.0, 0, 1) + "s", 20, 420);
 }
 
 void oscEvent(OscMessage msg) {
@@ -362,10 +294,11 @@ void oscEvent(OscMessage msg) {
 }
 
 void exit() {
-  sine1.stop(); sine2.stop(); sine3.stop();
-  squeakOsc.stop(); rustleNoise.stop();
-  chirp1.stop(); chirp2.stop();
+  sine1.stop();
+  sine2.stop();
+  sine3.stop();
   bellOsc.stop();
-  dogBark1.stop(); dogBark2.stop();
+  chirp2.stop();
+  rustleNoise.stop();
   super.exit();
 }
