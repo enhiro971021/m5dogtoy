@@ -84,6 +84,7 @@ float collarRelativeVar = 0;
 boolean collarRelativeLatched = false;
 float collarRelativeLastValue = 0;
 float collarRelativeLastUpdateMs = 0;
+float collarRelativeAccumMs = 0;
 
 // Ball settings
 boolean ballRollingEnabled = true;
@@ -528,8 +529,9 @@ void updateCollarRelativeBurst() {
   float sample = collarMotionScore;
   float dtMs = max(1, now - collarRelativeLastUpdateMs);
   collarRelativeLastUpdateMs = now;
+  collarRelativeAccumMs = min(20000.0f, collarRelativeAccumMs + dtMs);
 
-  float meanTauMs = 5000.0f;
+  float meanTauMs = 10000.0f;
   float alpha = constrain(dtMs / meanTauMs, 0, 1);
   collarRelativeMean = lerp(collarRelativeMean, sample, alpha);
 
@@ -537,18 +539,21 @@ void updateCollarRelativeBurst() {
   collarRelativeVar = lerp(collarRelativeVar, deviation * deviation, alpha);
   float std = sqrt(max(0.0001f, collarRelativeVar));
 
-  float threshold = collarRelativeMean + collarRelativeMargin;
+  boolean hasHistory = collarRelativeAccumMs >= 6000.0f;
+  float threshold = collarRelativeMean + collarRelativeMargin + std;
   boolean rising = sample > threshold && collarRelativeLastValue <= threshold;
 
-  if (!collarRelativeLatched && rising) {
+  if (!collarRelativeLatched && hasHistory && rising) {
     float overshoot = sample - threshold;
-    float amp = constrain(map(overshoot, 0, max(0.35f, std * 1.5f), 0.45f, 1.05f), 0.35f, 1.1f);
-    triggerSample(collarRelativeBurstSample, amp);
-    collarRelativeLatched = true;
+    if (overshoot > max(0.06f, std * 0.45f + collarRelativeMargin * 0.25f)) {
+      float amp = constrain(map(overshoot, 0, max(0.45f, std * 2.0f), 0.4f, 1.05f), 0.35f, 1.15f);
+      triggerSample(collarRelativeBurstSample, amp);
+      collarRelativeLatched = true;
+    }
   }
 
-  float rearmPoint = collarRelativeMean + max(0.025f, collarRelativeMargin * 0.4f);
-  if (sample < rearmPoint) {
+  float rearmPoint = collarRelativeMean + max(0.03f, collarRelativeMargin * 0.4f);
+  if (sample < rearmPoint || !hasHistory || std < 0.025f) {
     collarRelativeLatched = false;
   }
 }
