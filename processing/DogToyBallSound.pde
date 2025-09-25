@@ -83,6 +83,9 @@ float collarRelativeMean = 0;
 float collarRelativeVar = 0;
 boolean collarRelativeLatched = false;
 float collarRelativeLastValue = 0;
+float collarRelativeLastUpdate = 0;
+float collarRelativeLastTrigger = 0;
+float collarRelativeCooldownMs = 750;
 
 // Ball settings
 boolean ballRollingEnabled = true;
@@ -519,21 +522,39 @@ void updateCollarRelativeBurst() {
     return;
   }
 
-  float sample = collarMotionScore;
-  float diff = sample - collarRelativeMean;
-  collarRelativeMean = lerp(collarRelativeMean, sample, 0.08);
-  collarRelativeVar = lerp(collarRelativeVar, diff * diff, 0.08);
-  float std = sqrt(max(0.0001, collarRelativeVar));
-
-  float dynamicThreshold = collarRelativeMean + collarRelativeMargin + std;
-  boolean rising = sample > dynamicThreshold && collarRelativeLastValue <= dynamicThreshold;
-
-  if (!collarRelativeLatched && rising) {
-    triggerSample(collarRelativeBurstSample, constrain(map(diff, collarRelativeMargin, collarRelativeMargin + std * 2.0, 0.4, 1.1), 0.3, 1.2));
-    collarRelativeLatched = true;
+  float now = millis();
+  if (collarRelativeLastUpdate == 0) {
+    collarRelativeLastUpdate = now;
   }
 
-  if (sample < collarRelativeMean + max(0.05, collarRelativeMargin * 0.5)) {
+  float sample = collarMotionScore;
+  float dtMs = max(1, now - collarRelativeLastUpdate);
+  collarRelativeLastUpdate = now;
+
+  float meanTauMs = 5000.0f;
+  float varTauMs = 5500.0f;
+  float alphaMean = constrain(dtMs / meanTauMs, 0, 1);
+  float alphaVar = constrain(dtMs / varTauMs, 0, 1);
+
+  collarRelativeMean = lerp(collarRelativeMean, sample, alphaMean);
+  float centered = sample - collarRelativeMean;
+  collarRelativeVar = lerp(collarRelativeVar, centered * centered, alphaVar);
+  float std = sqrt(max(0.0002f, collarRelativeVar));
+
+  float dynamicThreshold = collarRelativeMean + collarRelativeMargin + std * 0.65f;
+  boolean rising = sample > dynamicThreshold && collarRelativeLastValue <= dynamicThreshold;
+  boolean cooldownReady = (now - collarRelativeLastTrigger) > collarRelativeCooldownMs;
+
+  if (!collarRelativeLatched && cooldownReady && rising) {
+    float intensity = centered;
+    float mappedAmp = constrain(map(intensity, collarRelativeMargin, collarRelativeMargin + std * 2.5f, 0.4f, 1.05f), 0.3f, 1.15f);
+    triggerSample(collarRelativeBurstSample, mappedAmp);
+    collarRelativeLatched = true;
+    collarRelativeLastTrigger = now;
+  }
+
+  float rearmThreshold = collarRelativeMean + max(0.04f, collarRelativeMargin * 0.45f + std * 0.2f);
+  if (sample < rearmThreshold) {
     collarRelativeLatched = false;
   }
 }
