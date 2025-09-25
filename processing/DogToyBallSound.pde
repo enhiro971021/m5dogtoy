@@ -1,6 +1,7 @@
 import oscP5.*;
 import netP5.*;
 import processing.sound.*;
+import processing.serial.*;
 
 OscP5 oscP5;
 // 基本音源
@@ -12,6 +13,16 @@ BandPass runNoiseFilter;
 
 // エンベロープ
 Env runNoiseEnv, runToneEnv;
+
+// シリアル入力
+Serial m5Serial;
+boolean useSerialInput = true;       // USB直結でテストする場合は true
+boolean serialReady = false;
+boolean serialHasPacket = false;
+float lastSerialDataMillis = 0;
+String serialStatusMessage = "";
+int serialPortIndex = 0;             // Serial.list() の何番目を使うか（自動検出が外れたら変更）
+String serialPortKeyword = "";      // ポート名に含まれるキーワード（例: "usb"、"COM"）。空なら index を優先
 
 float[] acc = new float[3];   // 加速度 [x, y, z]
 float[] gyro = new float[3];  // ジャイロ [x, y, z]
@@ -58,6 +69,12 @@ void setup() {
   oscP5 = new OscP5(this, 8000);
   textSize(16);
 
+  if (useSerialInput) {
+    initSerialInput();
+  } else {
+    serialStatusMessage = "Serial disabled";
+  }
+
   sine1 = new SinOsc(this);
   sine2 = new SinOsc(this);
   sine3 = new SinOsc(this);
@@ -81,6 +98,52 @@ void setup() {
   sine3.amp(0); sine3.play();
   bellOsc.amp(0); bellOsc.play();
   chirp2.amp(0); chirp2.play();
+}
+
+void initSerialInput() {
+  String[] ports = Serial.list();
+  println("=== Serial ports ===");
+  if (ports.length == 0) {
+    println("(none)");
+    serialReady = false;
+    serialHasPacket = false;
+    serialStatusMessage = "Serial: no ports found";
+    return;
+  }
+
+  for (int i = 0; i < ports.length; i++) {
+    println(i + ": " + ports[i]);
+  }
+
+  int resolvedIndex = resolveSerialPortIndex(ports);
+  resolvedIndex = constrain(resolvedIndex, 0, ports.length - 1);
+
+  try {
+    m5Serial = new Serial(this, ports[resolvedIndex], 115200);
+    m5Serial.clear();
+    m5Serial.bufferUntil('\n');
+    serialReady = true;
+    serialHasPacket = false;
+    serialStatusMessage = "Serial: " + ports[resolvedIndex];
+    println("Opening serial port -> " + ports[resolvedIndex]);
+  } catch (Exception e) {
+    e.printStackTrace();
+    serialReady = false;
+    serialHasPacket = false;
+    serialStatusMessage = "Serial open failed";
+  }
+}
+
+int resolveSerialPortIndex(String[] ports) {
+  if (serialPortKeyword != null && serialPortKeyword.length() > 0) {
+    String keyword = serialPortKeyword.toLowerCase();
+    for (int i = 0; i < ports.length; i++) {
+      if (ports[i].toLowerCase().indexOf(keyword) >= 0) {
+        return i;
+      }
+    }
+  }
+  return constrain(serialPortIndex, 0, ports.length - 1);
 }
 
 void draw() {
@@ -257,6 +320,24 @@ void drawStatus() {
     text("Still latch in " + nf(countdown, 1, 2) + " s", 20, 300);
   }
 
+  fill(200);
+  String serialLine = "";
+  if (!useSerialInput) {
+    serialLine = "Serial: disabled";
+  } else if (!serialReady) {
+    serialLine = "Serial: waiting for device";
+  } else if (!serialHasPacket) {
+    serialLine = "Serial: waiting for data";
+  } else {
+    serialLine = "Serial: OK (" + nf((millis() - lastSerialDataMillis)/1000.0, 1, 2) + "s ago)";
+  }
+  if (serialStatusMessage != null && serialStatusMessage.length() > 0) {
+    text(serialStatusMessage, 20, 320);
+    text(serialLine, 20, 340);
+  } else {
+    text(serialLine, 20, 320);
+  }
+
   fill(180);
   text("Running: paw taps + collar shimmer", 20, 350);
   text("Shake: collar jingle bursts", 20, 370);
@@ -291,6 +372,60 @@ void oscEvent(OscMessage msg) {
       gyro[2] = msg.get(2).floatValue();
     }
   }
+}
+
+void serialEvent(Serial which) {
+  if (!useSerialInput) {
+    return;
+  }
+  if (which != m5Serial) {
+    return;
+  }
+
+  String line = which.readStringUntil('\n');
+  if (line == null) {
+    return;
+  }
+  parseSerialLine(line);
+}
+
+void parseSerialLine(String raw) {
+  raw = trim(raw);
+  if (raw.length() == 0) {
+    return;
+  }
+
+  if (!raw.startsWith("IMU")) {
+    return;
+  }
+
+  String[] parts = split(raw, ',');
+  if (parts.length < 7) {
+    return;
+  }
+
+  float ax = parseFloat(parts[1]);
+  float ay = parseFloat(parts[2]);
+  float az = parseFloat(parts[3]);
+  float gx = parseFloat(parts[4]);
+  float gy = parseFloat(parts[5]);
+  float gz = parseFloat(parts[6]);
+
+  if (Float.isNaN(ax) || Float.isNaN(ay) || Float.isNaN(az) ||
+      Float.isNaN(gx) || Float.isNaN(gy) || Float.isNaN(gz)) {
+    return;
+  }
+
+  acc[0] = ax;
+  acc[1] = ay;
+  acc[2] = az;
+  gyro[0] = gx;
+  gyro[1] = gy;
+  gyro[2] = gz;
+
+  serialReady = true;
+  serialHasPacket = true;
+  lastSerialDataMillis = millis();
 }
 
 void exit() {
